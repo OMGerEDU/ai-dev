@@ -11,7 +11,7 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
-    "test": "node --experimental-vm-modules node_modules/.bin/jest",
+    "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js --config jest.config.cjs",
     "lint": "eslint src --ext .ts",
     "typecheck": "tsc --noEmit"
   },
@@ -19,12 +19,22 @@
     "zod": "^3.22.0"
   },
   "devDependencies": {
+    "@types/jest": "^30.0.0",
     "@types/node": "^20.0.0",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.4.9",
     "typescript": "^5.3.0"
   },
   "engines": {
     "node": ">=20"
   },
-  "keywords": ["ai", "autonomous", "agent", "coding", "goal-based", "aidev"],
+  "keywords": [
+    "ai",
+    "autonomous",
+    "agent",
+    "coding",
+    "goal-based",
+    "aidev"
+  ],
   "license": "MIT"
 }

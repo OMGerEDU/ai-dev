@@ -173,16 +173,28 @@ async function cmdMemory(): Promise<void> {
 // ── Env loading ───────────────────────────────────────────────────────────────
 
 function loadEnvConfig(): Record<string, string | undefined> {
-  // Merge process.env with .env.aidev if present
   const config: Record<string, string | undefined> = { ...process.env as any };
-  try {
-    const raw = require('fs').readFileSync(join(CWD, '.env.aidev'), 'utf8') as string;
-    for (const line of raw.split('\n')) {
-      const [k, ...vParts] = line.split('=');
-      if (k && !k.startsWith('#')) config[k.trim()] = vParts.join('=').trim();
-    }
-  } catch { /* no .env.aidev — use process.env only */ }
+  parseEnvFile(join(CWD, '.env.aidev'), config);
+  // Support AIDEV_ENV_EXTEND — load a second env file (e.g. a shared secrets file)
+  if (config['AIDEV_ENV_EXTEND']) {
+    parseEnvFile(config['AIDEV_ENV_EXTEND'], config);
+  }
   return config;
+}
+
+function parseEnvFile(path: string, into: Record<string, string | undefined>): void {
+  try {
+    const raw = require('fs').readFileSync(path, 'utf8') as string;
+    for (const line of raw.split('\n')) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#')) continue;
+      const eq = trimmed.indexOf('=');
+      if (eq < 1) continue;
+      const key = trimmed.slice(0, eq).trim();
+      const val = trimmed.slice(eq + 1).trim();
+      if (key) into[key] = val;
+    }
+  } catch { /* file absent — skip */ }
 }
 
 // ── Dispatch ──────────────────────────────────────────────────────────────────

@@ -46,9 +46,22 @@ export class Runner {
   private memory!: ProjectMemory;
 
   constructor(private readonly cfg: RunnerConfig) {
-    // Merge project hooks over defaults
-    const defaults = new DefaultHooks();
-    this.hooks = { ...defaults, ...(cfg.hooks ?? {}) } as HookContract;
+    // Merge project hooks over defaults.
+    // Object spread on a class instance loses prototype methods, so we
+    // explicitly delegate each method: project override first, then default.
+    const d = new DefaultHooks();
+    const p = cfg.hooks ?? {};
+    this.hooks = {
+      createBoard:            (p.createBoard            ?? d.createBoard.bind(d)),
+      buildProjectContext:    (p.buildProjectContext    ?? d.buildProjectContext.bind(d)),
+      buildTaskGuidance:      (p.buildTaskGuidance      ?? d.buildTaskGuidance.bind(d)),
+      filterContinuations:    (p.filterContinuations    ?? d.filterContinuations.bind(d)),
+      beforeRun:              (p.beforeRun              ?? d.beforeRun.bind(d)),
+      beforeTask:             (p.beforeTask             ?? d.beforeTask.bind(d)),
+      afterTask:              (p.afterTask              ?? d.afterTask.bind(d)),
+      afterRun:               (p.afterRun               ?? d.afterRun.bind(d)),
+      beforeResolveConflicts: (p.beforeResolveConflicts ?? d.beforeResolveConflicts.bind(d)),
+    };
   }
 
   async run(): Promise<void> {
@@ -88,8 +101,9 @@ export class Runner {
 
       if (!task) {
         log('No runnable tasks found. Checking for board vacuum...');
-        await this.handleBoardVacuum(milestones);
-        break;
+        const filled = await this.handleBoardVacuum(milestones);
+        if (!filled) break;   // no milestone left — truly done
+        continue;             // retry loop with the newly created task
       }
 
       // Check goal completion
@@ -219,11 +233,14 @@ export class Runner {
 
   // ── Board vacuum prevention ───────────────────────────────────────────────
 
-  private async handleBoardVacuum(_milestones: Milestone[]): Promise<void> {
-    const next = (await loadMilestones(this.cfg.projectRoot))
-      .find((m) => m.status === 'pending' && m.dependsOn.every(() => true));
+  private async handleBoardVacuum(_milestones: Milestone[]): Promise<boolean> {
+    const all  = await loadMilestones(this.cfg.projectRoot);
+    // Prefer the active in-progress milestone; then first pending whose deps are all done
+    const next = all.find((m) => m.status === 'in-progress')
+      ?? all.find((m) => m.status === 'pending'
+        && m.dependsOn.every((dep) => all.find((x) => x.id === dep)?.status === 'done'));
 
-    if (!next) return;
+    if (!next) return false;
 
     const spec: ContinuationSpec = {
       lane: next.lane,
@@ -238,6 +255,7 @@ export class Runner {
     const created = await this.board.createTask(spec);
     await this.board.markStart(created.id);
     log(`Board vacuum: created "${spec.title}"`);
+    return true;
   }
 }
 
@@ -266,10 +284,14 @@ function buildPrompt(task: AidevTask, projectCtx: string, taskGuidance: string, 
 
 function callAI(cli: string, prompt: string): { exitCode: number; output: string } {
   try {
-    const result = spawnSync(cli, ['--print', prompt], {
+    // Pass prompt via stdin to avoid Windows CLI arg length limits (32 767 chars).
+    // claude uses `-p` (--print) flag for non-interactive mode; prompt on stdin.
+    const result = spawnSync(cli, ['-p', '--allowedTools', 'Bash,Edit,Write,Read,Glob,Grep'], {
+      input:    prompt,
       encoding: 'utf8',
-      timeout: 300_000,   // 5 min max per task
-      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout:  300_000,   // 5 min max per task
+      stdio:    ['pipe', 'pipe', 'pipe'],
+      shell:    true,       // required on Windows to resolve CLI from PATH
     });
     return {
       exitCode: result.status ?? 1,

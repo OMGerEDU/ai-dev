@@ -6,3 +6,5 @@ dist/
 !.env.example
 *.log
 .aidev/milestones.json
+.aidev/memory.json
+.aidev/tasks/

@@ -80,8 +80,9 @@ function scoreProvider(
 
 function deriveTier(task: TaskLike, registry: ProviderRegistry): ModelTier {
   // Read-only tasks are auto-downtiered to save cost (OpenHands insight)
+  const readOnlyTasks = registry.readOnlyTasks ?? [];
   const isReadOnly = (task.tags ?? []).some((t) =>
-    registry.readOnlyTasks.includes(t.toLowerCase())
+    readOnlyTasks.includes(t.toLowerCase())
   );
   if (isReadOnly) return 'low';
 

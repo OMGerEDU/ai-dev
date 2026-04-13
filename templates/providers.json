@@ -96,6 +96,8 @@
     "performance":        ["performance-tuning", "debugging"]
   },
 
+  "readOnlyTasks": ["research", "review", "planning", "codebase-survey", "long-doc"],
+
   "tierForTask": {
     "safety-critical":   "high",
     "research":          "high",
