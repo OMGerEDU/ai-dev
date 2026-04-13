@@ -1,0 +1,116 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "aidev Milestones",
+  "description": "AI-derived intermediate states between project start and goal completion. Generated from goal.md on first run, updated as milestones are verified.",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "required": ["id", "title", "acceptanceCriteria", "status"],
+    "additionalProperties": false,
+    "properties": {
+      "id": {
+        "type": "string",
+        "description": "Short stable identifier, e.g. 'm1', 'm2-auth'",
+        "pattern": "^[a-z0-9][a-z0-9-]*$"
+      },
+      "title": {
+        "type": "string",
+        "description": "One-line description of the verifiable state this milestone represents"
+      },
+      "acceptanceCriteria": {
+        "type": "array",
+        "description": "Human-readable criteria — each maps to a verifyCmd or a manual check",
+        "items": { "type": "string" },
+        "minItems": 1
+      },
+      "verifyCmd": {
+        "type": "string",
+        "description": "Shell command that exits 0 when this milestone is met. Omit for manual-only milestones.",
+        "examples": ["npm run typecheck", "npm run test:unit", "npm run test:smoke"]
+      },
+      "status": {
+        "type": "string",
+        "enum": ["pending", "in-progress", "done", "blocked"],
+        "description": "Updated by aidev after each verifyCmd run"
+      },
+      "lane": {
+        "type": "string",
+        "enum": ["build", "qa", "research", "planning"],
+        "description": "Which task lane primarily advances this milestone"
+      },
+      "dependsOn": {
+        "type": "array",
+        "description": "IDs of milestones that must be 'done' before this one can be attempted",
+        "items": { "type": "string" }
+      },
+      "lastVerified": {
+        "type": "string",
+        "format": "date-time",
+        "description": "ISO timestamp of the last time verifyCmd was run"
+      },
+      "failureCount": {
+        "type": "integer",
+        "description": "How many consecutive times verifyCmd has failed. Triggers escalation at threshold.",
+        "default": 0
+      },
+      "notes": {
+        "type": "string",
+        "description": "Free-form notes from the last agent run — findings, blockers, partial progress"
+      }
+    }
+  },
+  "examples": [
+    [
+      {
+        "id": "m1",
+        "title": "TypeScript compiles clean",
+        "acceptanceCriteria": ["npm run typecheck exits 0 with no errors"],
+        "verifyCmd": "npm run typecheck",
+        "status": "done",
+        "lane": "build",
+        "dependsOn": [],
+        "failureCount": 0
+      },
+      {
+        "id": "m2",
+        "title": "Unit tests pass",
+        "acceptanceCriteria": [
+          "All tests in tests/unit/ pass",
+          "Flash detector correctly identifies ≥3 Hz transitions"
+        ],
+        "verifyCmd": "npm run test:unit",
+        "status": "in-progress",
+        "lane": "build",
+        "dependsOn": ["m1"],
+        "failureCount": 0
+      },
+      {
+        "id": "m3",
+        "title": "Smoke tests pass against live Electron window",
+        "acceptanceCriteria": [
+          "Electron window launches without error",
+          "Core chrome UI elements render"
+        ],
+        "verifyCmd": "npm run test:smoke",
+        "status": "pending",
+        "lane": "qa",
+        "dependsOn": ["m2"],
+        "failureCount": 0
+      },
+      {
+        "id": "m4",
+        "title": "Flash-block interventions fire correctly",
+        "acceptanceCriteria": [
+          "3 Hz flash fixture triggers intervention",
+          "Saturated red flash fixture triggers intervention",
+          "Intervention UI does not itself flash"
+        ],
+        "verifyCmd": "npm run test:flash:block",
+        "status": "pending",
+        "lane": "qa",
+        "dependsOn": ["m3"],
+        "failureCount": 0
+      }
+    ]
+  ]
+}

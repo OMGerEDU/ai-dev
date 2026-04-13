@@ -1,0 +1,30 @@
+{
+  "name": "@aidev/core",
+  "version": "0.1.0",
+  "description": "Goal-based autonomous AI delivery engine. Drop .aidev/ into any project and describe the goal — aidev works toward it.",
+  "type": "module",
+  "bin": {
+    "aidev": "./dist/cli/index.js"
+  },
+  "main": "./dist/engine/index.js",
+  "types": "./dist/engine/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "node --experimental-vm-modules node_modules/.bin/jest",
+    "lint": "eslint src --ext .ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "zod": "^3.22.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.3.0"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": ["ai", "autonomous", "agent", "coding", "goal-based", "aidev"],
+  "license": "MIT"
+}
