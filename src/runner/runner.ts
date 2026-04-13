@@ -17,7 +17,7 @@ import type { HookContract, RunContext, TaskContext, TaskResultContext } from '.
 import { DefaultHooks } from '../hooks/defaults.js';
 import type { TaskBoard } from '../boards/board.js';
 import { STATUS } from '../boards/board.js';
-import type { AidevTask, ContinuationSpec } from '../engine/types.js';
+import type { AidevTask, ContinuationSpec, Milestone } from '../engine/types.js';
 import { loadGoal, loadMilestones, saveMilestones, deriveMilestonesFromGoal, measureProgress, getActiveMilestone } from '../engine/goal-engine.js';
 import { advanceMilestone, buildGapContinuations, persistMilestoneUpdate } from '../engine/milestone-engine.js';
 import { loadProviderRegistry, selectProvider } from '../engine/provider-registry.js';
@@ -219,7 +219,7 @@ export class Runner {
 
   // ── Board vacuum prevention ───────────────────────────────────────────────
 
-  private async handleBoardVacuum(milestones: ReturnType<typeof buildGapContinuations>): Promise<void> {
+  private async handleBoardVacuum(_milestones: Milestone[]): Promise<void> {
     const next = (await loadMilestones(this.cfg.projectRoot))
       .find((m) => m.status === 'pending' && m.dependsOn.every(() => true));
 

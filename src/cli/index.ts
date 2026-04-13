@@ -11,15 +11,17 @@
  */
 
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { mkdir, copyFile, access } from 'node:fs/promises';
+import type { HookContract } from '../hooks/contract.js';
 import {
   loadGoal,
   loadMilestones,
   saveMilestones,
   deriveMilestonesFromGoal,
   measureProgress,
-  formatMilestoneStatus,
 } from '../engine/goal-engine.js';
+import { formatMilestoneStatus } from '../engine/milestone-engine.js';
 import { advanceMilestone, persistMilestoneUpdate, FAILURE_ESCALATION_THRESHOLD } from '../engine/milestone-engine.js';
 import { Runner } from '../runner/runner.js';
 import { ProjectMemory } from '../memory/memory.js';
@@ -36,11 +38,31 @@ const flags = {
 
 // ── Commands ──────────────────────────────────────────────────────────────────
 
+async function loadProjectHooks(): Promise<Partial<HookContract> | undefined> {
+  // Try .aidev/aidev.hooks.mjs first (plain JS, no build needed), then .js (compiled TS)
+  for (const name of ['aidev.hooks.mjs', 'aidev.hooks.js']) {
+    try {
+      const url = pathToFileURL(join(CWD, '.aidev', name)).href;
+      const mod = await import(url);
+      const hooks = mod.default ?? mod.hooks;
+      if (hooks) {
+        console.log(`[aidev] Loaded project hooks from .aidev/${name}`);
+        return hooks;
+      }
+    } catch {
+      // File doesn't exist or failed to parse — try next
+    }
+  }
+  return undefined;
+}
+
 async function cmdRun(): Promise<void> {
   const config = loadEnvConfig();
+  const hooks  = await loadProjectHooks();
   const runner = new Runner({
     projectRoot: CWD,
     config,
+    hooks,
     dryRun:   flags.dryRun,
     maxTasks: flags.maxTasks,
   });

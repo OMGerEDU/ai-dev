@@ -1,0 +1,113 @@
+{
+  "_comment": "Provider registry for aidev model routing. 'available' is overridden at runtime from AGENTS= env var.",
+  "providers": {
+    "claude": {
+      "cli": "claude",
+      "available": true,
+      "models": {
+        "high":   "claude-opus-4-6",
+        "medium": "claude-sonnet-4-6",
+        "low":    "claude-haiku-4-5"
+      },
+      "strengths": [
+        "research-architecture",
+        "research-decision",
+        "planning",
+        "qa",
+        "design",
+        "safety-review",
+        "reasoning",
+        "writing",
+        "ambiguity-reduction",
+        "ui-copy"
+      ],
+      "weaknesses": [
+        "repetitive-mechanical-edits",
+        "large-multi-file-refactor"
+      ],
+      "costTier": "high",
+      "contextWindow": 200000
+    },
+    "codex": {
+      "cli": "codex",
+      "available": true,
+      "models": {
+        "high":   "o3",
+        "medium": "o4-mini",
+        "low":    "gpt-4o-mini"
+      },
+      "strengths": [
+        "implementation",
+        "refactoring",
+        "debugging",
+        "automation",
+        "multi-file-edits",
+        "test-writing",
+        "wiring",
+        "performance-tuning",
+        "safety-critical-impl"
+      ],
+      "weaknesses": [
+        "nuanced-research",
+        "open-ended-design",
+        "ambiguous-scope"
+      ],
+      "costTier": "medium",
+      "contextWindow": 128000
+    },
+    "antigravity": {
+      "cli": "antigravity",
+      "available": false,
+      "models": {
+        "high":   "gemini-2.5-pro",
+        "medium": "gemini-2.0-flash",
+        "low":    "gemini-2.0-flash-lite"
+      },
+      "strengths": [
+        "research-broad",
+        "long-doc",
+        "multi-modal",
+        "large-context",
+        "cross-file-analysis",
+        "codebase-survey"
+      ],
+      "weaknesses": [
+        "deep-reasoning",
+        "safety-critical-decisions"
+      ],
+      "costTier": "medium",
+      "contextWindow": 1000000
+    }
+  },
+
+  "taskStrengthMap": {
+    "research":           ["research-architecture", "research-decision", "research-broad", "large-context"],
+    "planning":           ["planning", "ambiguity-reduction", "reasoning"],
+    "qa":                 ["qa", "reasoning", "safety-review"],
+    "implementation":     ["implementation", "multi-file-edits", "wiring"],
+    "refactor":           ["refactoring", "multi-file-edits"],
+    "debugging":          ["debugging", "reasoning"],
+    "automation":         ["automation", "test-writing"],
+    "ui":                 ["ui-copy", "design", "writing"],
+    "safety-critical":    ["safety-critical-impl", "safety-review", "reasoning"],
+    "long-doc":           ["long-doc", "large-context"],
+    "multi-modal":        ["multi-modal", "large-context"],
+    "codebase-survey":    ["codebase-survey", "large-context", "cross-file-analysis"],
+    "performance":        ["performance-tuning", "debugging"]
+  },
+
+  "tierForTask": {
+    "safety-critical":   "high",
+    "research":          "high",
+    "qa":                "medium",
+    "planning":          "medium",
+    "implementation":    "medium",
+    "debugging":         "high",
+    "automation":        "medium",
+    "ui":                "medium",
+    "refactor":          "medium",
+    "performance":       "medium",
+    "long-doc":          "high",
+    "multi-modal":       "high"
+  }
+}

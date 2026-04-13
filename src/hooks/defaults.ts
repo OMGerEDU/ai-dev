@@ -7,7 +7,8 @@
 
 import { resolveBoard } from '../boards/index.js';
 import { probeProject } from '../engine/project-probe.js';
-import { loadGoal, loadMilestones, measureProgress, formatMilestoneStatus } from '../engine/goal-engine.js';
+import { loadGoal, loadMilestones, measureProgress } from '../engine/goal-engine.js';
+import { formatMilestoneStatus } from '../engine/milestone-engine.js';
 import type { HookContract, RunContext, TaskContext, TaskResultContext, ConflictContext } from './contract.js';
 import type { TaskBoard } from '../boards/board.js';
 import type { AidevTask, ContinuationSpec } from '../engine/types.js';

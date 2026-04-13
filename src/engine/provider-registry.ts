@@ -89,7 +89,7 @@ function deriveTier(task: TaskLike, registry: ProviderRegistry): ModelTier {
   for (const tag of task.tags ?? []) {
     const mapped = registry.tierForTask[tag.toLowerCase()];
     if (mapped === 'high') return 'high';
-    if (mapped === 'low' && tier !== 'high') tier = 'low';
+    if (mapped === 'low') tier = 'low';
   }
   return tier;
 }
