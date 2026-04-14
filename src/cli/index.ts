@@ -13,6 +13,7 @@
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { mkdir, copyFile, access } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 import type { HookContract } from '../hooks/contract.js';
 import {
   loadGoal,
@@ -24,7 +25,7 @@ import {
 import { formatMilestoneStatus } from '../engine/milestone-engine.js';
 import { advanceMilestone, persistMilestoneUpdate, FAILURE_ESCALATION_THRESHOLD } from '../engine/milestone-engine.js';
 import { Runner } from '../runner/runner.js';
-import { ProjectMemory } from '../memory/memory.js';
+import { LocalMemory as ProjectMemory } from '../memory/memory.js';
 
 const TEMPLATES_DIR = new URL('../../templates/', import.meta.url).pathname.replace(/^\/([A-Z]:)/, '$1');
 const CWD = process.cwd();
@@ -184,7 +185,7 @@ function loadEnvConfig(): Record<string, string | undefined> {
 
 function parseEnvFile(path: string, into: Record<string, string | undefined>): void {
   try {
-    const raw = require('fs').readFileSync(path, 'utf8') as string;
+    const raw = readFileSync(path, 'utf8') as string;
     for (const line of raw.split('\n')) {
       const trimmed = line.trim();
       if (!trimmed || trimmed.startsWith('#')) continue;
