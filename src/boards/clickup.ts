@@ -62,7 +62,10 @@ export class ClickUpBoard implements TaskBoard {
       status,
     });
 
-    if (!res.ok) throw new Error(`ClickUp createTask failed: ${res.status}`);
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      throw new Error(`ClickUp createTask failed: ${res.status} — ${body.slice(0, 200)}`);
+    }
     const task = normalise(await res.json());
 
     if (spec.tags.length) await this.addTags(task.id, spec.tags);
@@ -121,8 +124,29 @@ function normalise(raw: any): AidevTask {
     id:          String(raw?.id ?? ''),
     name:        String(raw?.name ?? ''),
     description: String(raw?.description ?? raw?.text_content ?? ''),
-    status:      String(raw?.status?.status ?? raw?.status ?? 'pending'),
+    status:      normaliseStatus(raw?.status),
     url:         String(raw?.url ?? ''),
     tags,
   };
+}
+
+/**
+ * Map ClickUp's custom status labels to internal STATUS constants.
+ * ClickUp's `status.type` is the standardised field regardless of display name:
+ *   "open"        → any "not started" status (e.g. "to do", "backlog")
+ *   "in_progress" → any active status
+ *   "done"        → completed
+ *   "closed"      → archived/closed
+ */
+function normaliseStatus(s: any): string {
+  const type = String(s?.type ?? '').toLowerCase();
+  if (type === 'open')                      return 'open';
+  if (type === 'in_progress')               return 'in_progress';
+  if (type === 'done' || type === 'closed') return 'done';
+  // Fallback: try the raw label mapped to closest internal value
+  const label = String(s?.status ?? '').toLowerCase();
+  if (label === 'open' || label === 'to do' || label === 'backlog') return 'open';
+  if (label === 'in progress' || label === 'in_progress')           return 'in_progress';
+  if (label === 'done' || label === 'complete' || label === 'closed') return 'done';
+  return 'pending';
 }

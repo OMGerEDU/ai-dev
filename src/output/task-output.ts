@@ -15,12 +15,15 @@ export const TaskOutputSchema = z.object({
   /** Files written or meaningfully modified */
   artifactsProduced: z.array(z.string()).default([]),
 
-  /** Shell commands the agent ran and their exit status */
-  commandsRun: z.array(z.object({
-    cmd: z.string(),
-    exitCode: z.number(),
-    passed: z.boolean(),
-  })).default([]),
+  /** Shell commands the agent ran and their exit status.
+   *  Accepts both simple strings ("npm test") and detailed objects.
+   *  Agents frequently return strings — normalised to objects internally. */
+  commandsRun: z.array(
+    z.union([
+      z.string().transform((s) => ({ cmd: s, exitCode: 0, passed: true })),
+      z.object({ cmd: z.string(), exitCode: z.number().default(0), passed: z.boolean().default(true) }),
+    ])
+  ).default([]),
 
   /** Result of the milestone's verifyCmd if it was run */
   testsResult: z.enum(['pass', 'fail', 'skipped', 'not-run']).default('not-run'),
