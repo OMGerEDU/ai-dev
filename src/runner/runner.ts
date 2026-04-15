@@ -22,7 +22,10 @@ import { loadGoal, loadMilestones, saveMilestones, deriveMilestonesFromGoal, mea
 import { advanceMilestone, buildGapContinuations, persistMilestoneUpdate } from '../engine/milestone-engine.js';
 import { loadProviderRegistry, selectProvider } from '../engine/provider-registry.js';
 import { extractJsonFromAgentText, validateTaskOutput, isGenuinelyDone, summariseOutput } from '../output/task-output.js';
-import { ProjectMemory } from '../memory/memory.js';
+import { LocalMemory as ProjectMemory } from '../memory/memory.js';
+import { loadSkills, buildSkillsSection, ensureSkillsInstalled } from '../skills/index.js';
+import type { SkillEntry } from '../skills/index.js';
+import { postEndOfCycleReport } from './end-of-cycle.js';
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
@@ -91,6 +94,12 @@ export class Runner {
 
     await this.hooks.beforeRun({ ...runCtx, taskCount: 0 });
 
+    // ── Run-level tracking (for end-of-cycle report) ──────────────────────────
+    const runStartedAt = new Date();
+    const runArtifacts: string[] = [];
+    const runTestResults: Array<'pass' | 'fail' | 'skipped' | 'not-run'> = [];
+    let lastTaskId: string | undefined;
+
     // ── Main loop ─────────────────────────────────────────────────────────────
     let processed = 0;
     let skipped   = 0;
@@ -115,6 +124,7 @@ export class Runner {
       }
 
       log(`Running task: "${task.name}" [${task.tags.join(', ')}]`);
+      lastTaskId = task.id;
       await this.board.updateStatus(task.id, STATUS.IN_PROGRESS);
 
       const selection = selectProvider(task, registry);
@@ -123,13 +133,14 @@ export class Runner {
       const taskGuidance = await this.hooks.buildTaskGuidance(task, selection);
       const activeMilestone = getActiveMilestone(milestones);
       const memCtx = this.memory.contextForTask(activeMilestone?.id, task.tags);
+      const skills = await loadSkills(projectRoot);
 
       let taskCtx: TaskContext = {
         task,
         projectRoot,
         config,
         branchName: currentBranch(projectRoot),
-        prompt: buildPrompt(task, projectCtx, taskGuidance, memCtx),
+        prompt: buildPrompt(task, projectCtx, taskGuidance, memCtx, skills),
         providerSelection: selection,
       };
 
@@ -156,6 +167,12 @@ export class Runner {
       const genuinelyDone = validation.valid && validation.output ? isGenuinelyDone(validation.output) : false;
       const outputSummary = validation.output ? summariseOutput(validation.output) : rawOutput.slice(0, 300);
 
+      // Collect run-level data for end-of-cycle report
+      if (validation.output?.artifactsProduced?.length) {
+        runArtifacts.push(...validation.output.artifactsProduced);
+      }
+      runTestResults.push(validation.output?.testsResult ?? 'not-run');
+
       // ── Milestone advancement ─────────────────────────────────────────────
       let continuations: ContinuationSpec[] = [];
 
@@ -173,19 +190,19 @@ export class Runner {
         });
 
         if (escalated) {
-          await this.board.updateStatus(task.id, STATUS.REVIEW);
-          await this.board.postComment(task.id, `Milestone escalated: ${activeMilestone.title}\n${outputSummary}`);
+          await boardOp(() => this.board.updateStatus(task.id, STATUS.REVIEW), log);
+          await boardOp(() => this.board.postComment(task.id, `Milestone escalated: ${activeMilestone.title}\n${outputSummary}`), log);
           this.memory.record({ kind: 'milestone-escalated', milestoneId: activeMilestone.id, notes: outputSummary });
         } else if (verifyResult.passed) {
-          await this.board.updateStatus(task.id, STATUS.DONE);
-          await this.board.postComment(task.id, `Milestone ${activeMilestone.id} verified ✓\n${outputSummary}`);
+          await boardOp(() => this.board.updateStatus(task.id, STATUS.DONE), log);
+          await boardOp(() => this.board.postComment(task.id, `Milestone ${activeMilestone.id} verified ✓\n${outputSummary}`), log);
           this.memory.record({ kind: 'milestone-verified', milestoneId: activeMilestone.id, notes: outputSummary });
         } else {
-          await this.board.updateStatus(task.id, STATUS.REVIEW);
+          await boardOp(() => this.board.updateStatus(task.id, STATUS.REVIEW), log);
         }
       } else if (!genuinelyDone) {
-        await this.board.updateStatus(task.id, STATUS.REVIEW);
-        await this.board.postComment(task.id, `Task incomplete or low confidence.\n${outputSummary}`);
+        await boardOp(() => this.board.updateStatus(task.id, STATUS.REVIEW), log);
+        await boardOp(() => this.board.postComment(task.id, `Task incomplete or low confidence.\n${outputSummary}`), log);
         if (activeMilestone) {
           continuations = buildGapContinuations({
             milestone: activeMilestone,
@@ -211,14 +228,32 @@ export class Runner {
         approachSummary: task.name,
       });
 
+      // ── Install skills requested by the agent ─────────────────────────────
+      if (validation.output?.skillsRequested?.length) {
+        const allSkills = await loadSkills(projectRoot);
+        const requestedIds = new Set(validation.output.skillsRequested);
+        const toInstall = allSkills.filter((s) => requestedIds.has(s.id));
+        if (toInstall.length) {
+          try {
+            await ensureSkillsInstalled(toInstall, projectRoot);
+          } catch (err: any) {
+            log(`Warning: skill install failed — ${err.message}`);
+          }
+        }
+      }
+
       // ── Post continuations ────────────────────────────────────────────────
       const resultCtx: TaskResultContext = { ...taskCtx, success: genuinelyDone, rawOutput };
       const filteredContinuations = await this.hooks.filterContinuations(continuations, resultCtx);
 
       for (const spec of filteredContinuations) {
-        const created = await this.board.createTask(spec);
-        if (spec.status === 'Open') await this.board.markStart(created.id);
-        log(`  → Created continuation: "${spec.title}" [${spec.lane}]`);
+        try {
+          const created = await this.board.createTask(spec);
+          if (spec.status === 'Open') await boardOp(() => this.board.markStart(created.id), log);
+          log(`  → Created continuation: "${spec.title}" [${spec.lane}]`);
+        } catch (err: any) {
+          log(`Warning: failed to post continuation "${spec.title}" — ${err.message}`);
+        }
       }
 
       await this.hooks.afterTask(resultCtx);
@@ -229,6 +264,27 @@ export class Runner {
 
     await this.hooks.afterRun({ ...runCtx, taskCount: processed, processed, skipped });
     log(`Run complete — ${processed} processed, ${skipped} skipped`);
+
+    // ── End-of-cycle report (fire-and-forget) ─────────────────────────────────
+    const finalMilestones = await loadMilestones(projectRoot);
+    const finalProgress   = measureProgress(finalMilestones);
+    if (finalProgress.isComplete) {
+      postEndOfCycleReport({
+        projectRoot,
+        milestones:      finalMilestones,
+        progress:        finalProgress,
+        artifacts:       runArtifacts,
+        taskTestResults: runTestResults,
+        tasksProcessed:  processed,
+        startedAt:       runStartedAt,
+        finishedAt:      new Date(),
+        board:           this.board,
+        lastTaskId,
+        log,
+      }).catch((err: unknown) => {
+        log(`Warning: end-of-cycle report error — ${(err as Error)?.message ?? String(err)}`);
+      });
+    }
   }
 
   // ── Board vacuum prevention ───────────────────────────────────────────────
@@ -269,10 +325,12 @@ function pickNextTask(tasks: AidevTask[], startTag: string): AidevTask | null {
   }) ?? null;
 }
 
-function buildPrompt(task: AidevTask, projectCtx: string, taskGuidance: string, memCtx: string): string {
+function buildPrompt(task: AidevTask, projectCtx: string, taskGuidance: string, memCtx: string, skills: SkillEntry[] = []): string {
+  const skillsSection = buildSkillsSection(skills);
   const parts = [
     projectCtx,
     memCtx && `\n---\n${memCtx}`,
+    skillsSection && `\n---\n\n${skillsSection}`,
     `\n---\n\n## Task: ${task.name}`,
     task.description && `\n${task.description}`,
     `\n\n${taskGuidance}`,
@@ -316,4 +374,13 @@ function log(...args: unknown[]): void {
 
 function capitalize(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+/** Wrap a board API call so network errors are logged but never crash the runner. */
+async function boardOp(fn: () => Promise<void>, logger: (...a: unknown[]) => void): Promise<void> {
+  try {
+    await fn();
+  } catch (err: any) {
+    logger(`Warning: board operation failed — ${err.message ?? String(err)}`);
+  }
 }

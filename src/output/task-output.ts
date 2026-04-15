@@ -45,6 +45,12 @@ export const TaskOutputSchema = z.object({
 
   /** Which milestone ID this output corresponds to */
   milestoneId: z.string().optional(),
+
+  /**
+   * Skill IDs the agent wants installed before the next task.
+   * The runner will call ensureSkillsInstalled() for these entries.
+   */
+  skillsRequested: z.array(z.string()).optional(),
 });
 
 export type TaskOutput = z.infer<typeof TaskOutputSchema>;

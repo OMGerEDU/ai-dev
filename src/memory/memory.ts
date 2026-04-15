@@ -64,12 +64,50 @@ export interface MemoryStore {
   events: MemoryEvent[];                           // full append-only log
 }
 
-// ── Memory class ──────────────────────────────────────────────────────────────
+// ── MemoryAdapter interface ───────────────────────────────────────────────────
+
+/**
+ * Pluggable memory adapter interface.
+ * Implement this to swap out the storage backend (local JSON, remote DB, etc.)
+ * without touching core engine code.
+ */
+export interface MemoryAdapter {
+  /** Append a raw event and update in-memory indexes */
+  record(event: Omit<MemoryEvent, 'timestamp'>): void;
+
+  /** Record the outcome of a task run and update provider/milestone stats */
+  recordTaskOutcome(opts: {
+    taskName: string;
+    milestoneId?: string;
+    success: boolean;
+    provider: string;
+    model: string;
+    tags: string[];
+    notes?: string;
+    evidence?: string;
+    blockers?: string[];
+    approachSummary?: string;
+  }): void;
+
+  /** Natural-language summary of prior attempts for a milestone */
+  recallMilestone(milestoneId: string): string;
+
+  /** Best provider for the given tags based on past outcomes */
+  recommendProvider(tags: string[]): string | null;
+
+  /** Compact context string for injecting into task prompts */
+  contextForTask(milestoneId?: string, tags?: string[]): string;
+
+  /** Persist any pending changes */
+  save(): Promise<void>;
+}
+
+// ── LocalMemory implementation ────────────────────────────────────────────────
 
 const MEMORY_FILE = '.aidev/memory.json';
 const MAX_EVENTS  = 500;  // trim oldest when exceeded
 
-export class ProjectMemory {
+export class LocalMemory implements MemoryAdapter {
   private store: MemoryStore;
   private dirty = false;
 
@@ -77,13 +115,13 @@ export class ProjectMemory {
     this.store = emptyStore(projectName);
   }
 
-  static async load(projectRoot: string, projectName = 'unknown'): Promise<ProjectMemory> {
-    const mem = new ProjectMemory(projectRoot, projectName);
+  static async load(projectRoot: string, projectName = 'unknown'): Promise<LocalMemory> {
+    const mem = new LocalMemory(projectRoot, projectName);
     await mem.loadFromDisk();
     return mem;
   }
 
-  // ── Write API ──────────────────────────────────────────────────────────────
+  // ── MemoryAdapter implementation ───────────────────────────────────────────
 
   record(event: Omit<MemoryEvent, 'timestamp'>): void {
     const full: MemoryEvent = { ...event, timestamp: new Date().toISOString() };

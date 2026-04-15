@@ -8,3 +8,5 @@ dist/
 .aidev/milestones.json
 .aidev/memory.json
 .aidev/tasks/
+.aidev/report.md
+.aidev/next-goal.md
