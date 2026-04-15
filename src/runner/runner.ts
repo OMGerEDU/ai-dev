@@ -110,6 +110,10 @@ export class Runner {
       const task  = pickNextTask(tasks, startTag);
 
       if (!task) {
+        if (tasks.some((item) => item.status.toLowerCase() === STATUS.REVIEW)) {
+          log('No runnable tasks found, but review tasks are waiting. Stopping run without board vacuum.');
+          break;
+        }
         log('No runnable tasks found. Checking for board vacuum...');
         const filled = await this.handleBoardVacuum(milestones);
         if (!filled) break;   // no milestone left — truly done
@@ -168,8 +172,17 @@ export class Runner {
       const extracted  = extractJsonFromAgentText(rawOutput);
       const validation = extracted ? validateTaskOutput(extracted) : { valid: false, output: null, errors: ['No structured output found'] };
 
+      const hasInvocationFailure = !success;
+      const hasStructuredOutputFailure = !extracted || !validation.valid;
+      const shouldHaltRun = hasInvocationFailure || hasStructuredOutputFailure;
       const genuinelyDone = validation.valid && validation.output ? isGenuinelyDone(validation.output) : false;
-      const outputSummary = validation.output ? summariseOutput(validation.output) : rawOutput.slice(0, 300);
+      const outputSummary = validation.output
+        ? summariseOutput(validation.output)
+        : hasInvocationFailure
+          ? `Provider invocation failed.\n${rawOutput.slice(0, 300)}`
+          : !extracted
+            ? 'No structured output found in agent response.'
+            : `Invalid structured output.\n${validation.errors.join('\n')}`;
 
       // Collect run-level data for end-of-cycle report
       if (validation.output?.artifactsProduced?.length) {
@@ -207,7 +220,7 @@ export class Runner {
       } else if (!genuinelyDone) {
         await boardOp(() => this.board.updateStatus(task.id, STATUS.REVIEW), log);
         await boardOp(() => this.board.postComment(task.id, `Task incomplete or low confidence.\n${outputSummary}`), log);
-        if (activeMilestone) {
+        if (activeMilestone && !shouldHaltRun) {
           continuations = buildGapContinuations({
             milestone: activeMilestone,
             success: false,
@@ -250,11 +263,14 @@ export class Runner {
       const resultCtx: TaskResultContext = { ...taskCtx, success: genuinelyDone, rawOutput };
       const filteredContinuations = await this.hooks.filterContinuations(continuations, resultCtx);
 
-      for (const spec of filteredContinuations) {
+      for (const spec of dedupeContinuationSpecs(filteredContinuations)) {
         try {
-          const created = await this.board.createTask(spec);
-          if (spec.status === 'Open') await boardOp(() => this.board.markStart(created.id), log);
-          log(`  → Created continuation: "${spec.title}" [${spec.lane}]`);
+          const outcome = await this.upsertContinuation(spec);
+          if (outcome.kind === 'created') {
+            log(`  → Created continuation: "${spec.title}" [${spec.lane}]`);
+          } else {
+            log(`  → Updated existing mission: "${outcome.task.name}" [${spec.lane}]`);
+          }
         } catch (err: any) {
           log(`Warning: failed to post continuation "${spec.title}" — ${err.message}`);
         }
@@ -264,6 +280,11 @@ export class Runner {
       await this.memory.save();
 
       processed++;
+
+      if (shouldHaltRun) {
+        log('Halting run after provider or output failure. Task left in review for manual retry.');
+        break;
+      }
     }
 
     await this.hooks.afterRun({ ...runCtx, taskCount: processed, processed, skipped });
@@ -312,10 +333,38 @@ export class Runner {
       milestoneId: next.id,
     };
 
-    const created = await this.board.createTask(spec);
-    await this.board.markStart(created.id);
-    log(`Board vacuum: created "${spec.title}"`);
+    const outcome = await this.upsertContinuation(spec);
+    log(`Board vacuum: ${outcome.kind === 'created' ? 'created' : 'updated'} "${spec.title}"`);
     return true;
+  }
+
+  private async upsertContinuation(spec: ContinuationSpec): Promise<
+    | { kind: 'created'; task: AidevTask }
+    | { kind: 'updated'; task: AidevTask }
+  > {
+    const tasks = await this.board.fetchTasks();
+    const existing = tasks.find((task) => isActiveMission(task) && taskMissionKey(task) === continuationMissionKey(spec));
+
+    if (!existing) {
+      const created = await this.board.createTask(spec);
+      if (spec.status === 'Open') await boardOp(() => this.board.markStart(created.id), log);
+      return { kind: 'created', task: created };
+    }
+
+    const updateText = [
+      `Reason: ${spec.reason}`,
+      spec.description,
+    ].join('\n\n');
+
+    await boardOp(() => this.board.appendUpdate(existing.id, spec.title, updateText), log);
+    await boardOp(() => this.board.addTags(existing.id, spec.tags), log);
+    if (spec.status === 'Open') {
+      await boardOp(() => this.board.markStart(existing.id), log);
+    } else {
+      await boardOp(() => this.board.updateStatus(existing.id, STATUS.PENDING), log);
+    }
+
+    return { kind: 'updated', task: { ...existing, name: spec.title } };
   }
 }
 
@@ -327,6 +376,51 @@ function pickNextTask(tasks: AidevTask[], startTag: string): AidevTask | null {
     const isOpen = status === STATUS.OPEN || status === STATUS.IN_PROGRESS;
     return isOpen && t.tags.some((tag) => tag.toLowerCase() === startTag.toLowerCase());
   }) ?? null;
+}
+
+function dedupeContinuationSpecs(specs: ContinuationSpec[]): ContinuationSpec[] {
+  const seen = new Set<string>();
+  const deduped: ContinuationSpec[] = [];
+
+  for (const spec of specs) {
+    const key = continuationMissionKey(spec);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(spec);
+  }
+
+  return deduped;
+}
+
+function continuationMissionKey(spec: ContinuationSpec): string {
+  return [normalizeMissionTitle(spec.title), spec.milestoneId ?? '', missionFamily(spec.title)].join('::');
+}
+
+function taskMissionKey(task: AidevTask): string {
+  const milestoneId = task.milestoneId ?? task.tags.find((tag) => /^m\d+$/i.test(tag)) ?? '';
+  return [normalizeMissionTitle(task.name), milestoneId, missionFamily(task.name)].join('::');
+}
+
+function normalizeMissionTitle(title: string): string {
+  return title
+    .replace(/^\s*(build|fix|qa|review|research|planning)\s*:\s*/i, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
+
+function missionFamily(title: string): string {
+  const prefix = title.match(/^\s*([a-z]+)\s*:/i)?.[1]?.toLowerCase() ?? 'generic';
+  if (prefix === 'build' || prefix === 'fix') return 'build-fix';
+  return prefix;
+}
+
+function isActiveMission(task: AidevTask): boolean {
+  const status = task.status.toLowerCase();
+  return status === STATUS.PENDING
+    || status === STATUS.OPEN
+    || status === STATUS.IN_PROGRESS
+    || status === STATUS.REVIEW;
 }
 
 function buildPrompt(task: AidevTask, projectCtx: string, taskGuidance: string, memCtx: string, skills: SkillEntry[] = []): string {

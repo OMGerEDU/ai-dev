@@ -23,6 +23,9 @@ export interface TaskBoard {
   /** Append a comment / note to a task */
   postComment(id: string, text: string): Promise<void>;
 
+  /** Append a structured update block to the task description/history */
+  appendUpdate(id: string, title: string, text: string): Promise<void>;
+
   /** Add tags to a task (idempotent) */
   addTags(id: string, tags: string[]): Promise<void>;
 

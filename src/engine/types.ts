@@ -39,6 +39,7 @@ export interface AidevTask {
   status: string;
   url: string;
   tags: string[];
+  milestoneId?: string;
 }
 
 // ── Continuation spec (what the engine generates) ────────────────────────────

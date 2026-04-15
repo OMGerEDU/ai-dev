@@ -103,6 +103,32 @@ describe('extractJsonFromAgentText', () => {
     expect(extractJsonFromAgentText(text)).toEqual({ milestoneAdvanced: true });
   });
 
+  it('prefers the last valid fenced json block when earlier transcript content includes an invalid sample', () => {
+    const text = [
+      'OpenAI Codex v0.118.0',
+      '--------',
+      'user',
+      'When done, respond with a JSON block:',
+      '```json',
+      '{ "milestoneAdvanced": true|false, "testsResult": "pass|fail|skipped|not-run" }',
+      '```',
+      'assistant',
+      '```json',
+      '{"milestoneAdvanced":true,"confidence":"high","testsResult":"pass","artifactsProduced":[],"commandsRun":[],"blockers":[],"notes":"done"}',
+      '```',
+    ].join('\n');
+
+    expect(extractJsonFromAgentText(text)).toEqual({
+      milestoneAdvanced: true,
+      confidence: 'high',
+      testsResult: 'pass',
+      artifactsProduced: [],
+      commandsRun: [],
+      blockers: [],
+      notes: 'done',
+    });
+  });
+
   it('extracts raw JSON object when no fence', () => {
     const text = 'Result: {"milestoneAdvanced":false}';
     expect(extractJsonFromAgentText(text)).toEqual({ milestoneAdvanced: false });

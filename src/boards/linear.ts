@@ -130,6 +130,27 @@ export class LinearBoard implements TaskBoard {
     await this.gql(mutation, { input: { issueId: id, body: text } });
   }
 
+  async appendUpdate(id: string, title: string, text: string): Promise<void> {
+    const issue = await this.fetchTask(id);
+    const existing = issue?.description ?? '';
+    const description = [
+      existing,
+      '',
+      '---',
+      `## Update - ${title}`,
+      `_Appended: ${new Date().toISOString()}_`,
+      '',
+      text,
+    ].filter(Boolean).join('\n');
+
+    const mutation = `
+      mutation($id: String!, $input: IssueUpdateInput!) {
+        issueUpdate(id: $id, input: $input) { success }
+      }
+    `;
+    await this.gql(mutation, { id, input: { description } });
+  }
+
   async addTags(id: string, tags: string[]): Promise<void> {
     const issue = await this.fetchTask(id);
     const existingTags = new Set(issue?.tags ?? []);
@@ -245,6 +266,7 @@ function normalise(raw: any): AidevTask {
     status:      normaliseStatus(raw?.state),
     url:         String(raw?.url ?? ''),
     tags,
+    milestoneId: undefined,
   };
 }
 

@@ -53,6 +53,12 @@ class MemoryBoard implements TaskBoard {
 
   async postComment(): Promise<void> {}
 
+  async appendUpdate(id: string, title: string, text: string): Promise<void> {
+    const task = this.tasks.find((item) => item.id === id);
+    if (!task) return;
+    task.description = [task.description, '---', `## Update - ${title}`, text].join('\n');
+  }
+
   async addTags(id: string, tags: string[]): Promise<void> {
     const task = this.tasks.find((item) => item.id === id);
     if (!task) return;
@@ -204,5 +210,117 @@ describe('Runner provider failover', () => {
 
     const task = await board.fetchTask('task-1');
     expect(task?.status).toBe('done');
+  });
+
+  it('halts the run without creating duplicate continuations when fallback output is not structured', async () => {
+    spawnSyncMock.mockImplementation((cli: unknown) => {
+      const command = String(cli);
+      if (command === 'claude') {
+        return {
+          status: 1,
+          stdout: '',
+          stderr: '429 rate limit exceeded for claude',
+        };
+      }
+
+      if (command === 'codex') {
+        return {
+          status: 0,
+          stdout: [
+            'OpenAI Codex v0.118.0 (research preview)',
+            '--------',
+            'user',
+            '## Project: Test',
+            '',
+            'No final JSON was produced.',
+          ].join('\n'),
+          stderr: '',
+        };
+      }
+
+      throw new Error(`Unexpected CLI: ${command}`);
+    });
+
+    const board = new MemoryBoard([
+      {
+        id: 'task-1',
+        name: 'Plan the failover fix',
+        description: 'Retry with codex when claude is unavailable.',
+        status: 'open',
+        url: '',
+        tags: ['start', 'planning'],
+      },
+    ]);
+
+    const runner = new Runner({
+      projectRoot,
+      config: { AGENTS: 'claude,codex' },
+      hooks: {
+        createBoard: () => board,
+        buildProjectContext: () => '',
+        buildTaskGuidance: () => '',
+      },
+      maxTasks: 3,
+    });
+
+    await runner.run();
+
+    expect(spawnSyncMock).toHaveBeenCalledTimes(2);
+    expect((await board.fetchTasks()).map((task) => task.name)).toEqual(['Plan the failover fix']);
+    expect((await board.fetchTask('task-1'))?.status).toBe('review');
+
+    const milestones = JSON.parse(
+      await readFile(join(projectRoot, '.aidev', 'milestones.json'), 'utf8'),
+    ) as Array<{ status: string }>;
+    expect(milestones[0]?.status).toBe('pending');
+  });
+
+  it('merges matching build and fix continuations into the same mission', async () => {
+    spawnSyncMock.mockImplementation((cli: unknown) => {
+      const command = String(cli);
+      if (command === 'claude') {
+        return {
+          status: 0,
+          stdout: [
+            '```json',
+            '{"milestoneAdvanced":false,"testsResult":"not-run","confidence":"medium","blockers":[],"notes":"needs another pass"}',
+            '```',
+          ].join('\n'),
+          stderr: '',
+        };
+      }
+
+      throw new Error(`Unexpected CLI: ${command}`);
+    });
+
+    const board = new MemoryBoard([
+      {
+        id: 'task-1',
+        name: 'Build: Planning task succeeds after provider failover',
+        description: 'Initial mission description',
+        status: 'open',
+        url: '',
+        tags: ['start', 'planning', 'm1'],
+        milestoneId: 'm1',
+      },
+    ]);
+
+    const runner = new Runner({
+      projectRoot,
+      config: { AGENTS: 'claude' },
+      hooks: {
+        createBoard: () => board,
+        buildProjectContext: () => '',
+        buildTaskGuidance: () => '',
+      },
+      maxTasks: 1,
+    });
+
+    await runner.run();
+
+    const tasks = await board.fetchTasks();
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0]?.id).toBe('task-1');
+    expect(tasks[0]?.description).toContain('Initial mission description');
   });
 });

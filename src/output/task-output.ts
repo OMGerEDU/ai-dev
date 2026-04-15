@@ -85,19 +85,92 @@ export function validateTaskOutput(raw: unknown): ValidationResult {
  * Looks for ```json ... ``` or a raw top-level object.
  */
 export function extractJsonFromAgentText(text: string): unknown | null {
-  // Try fenced code block first
-  const fenced = text.match(/```json\s*([\s\S]*?)```/);
-  if (fenced) {
-    try { return JSON.parse(fenced[1]); } catch { /* fall through */ }
+  let lastParsed: unknown | null = null;
+
+  // Prefer the last valid fenced JSON block. Some CLIs echo the prompt first,
+  // including example JSON that should not be treated as the final answer.
+  const fencedMatches = text.matchAll(/```json\s*([\s\S]*?)```/gi);
+  for (const match of fencedMatches) {
+    try {
+      lastParsed = JSON.parse(match[1]);
+    } catch {
+      // Ignore invalid examples and keep scanning for the actual final block.
+    }
   }
 
-  // Try raw JSON object
-  const rawMatch = text.match(/\{[\s\S]*\}/);
-  if (rawMatch) {
-    try { return JSON.parse(rawMatch[0]); } catch { /* fall through */ }
+  if (lastParsed !== null) {
+    return lastParsed;
   }
 
-  return null;
+  // Fall back to scanning balanced raw JSON objects and return the last valid one.
+  for (const candidate of findBalancedJsonObjects(text)) {
+    try {
+      lastParsed = JSON.parse(candidate);
+    } catch {
+      // Keep scanning until we find the last valid object.
+    }
+  }
+
+  return lastParsed;
+}
+
+function findBalancedJsonObjects(text: string): string[] {
+  const objects: string[] = [];
+  let start = -1;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+
+    if (start === -1) {
+      if (ch === '{') {
+        start = i;
+        depth = 1;
+        inString = false;
+        escaped = false;
+      }
+      continue;
+    }
+
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+
+      if (ch === '\\') {
+        escaped = true;
+        continue;
+      }
+
+      if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (ch === '"') {
+      inString = true;
+      continue;
+    }
+
+    if (ch === '{') {
+      depth += 1;
+      continue;
+    }
+
+    if (ch === '}') {
+      depth -= 1;
+      if (depth === 0) {
+        objects.push(text.slice(start, i + 1));
+        start = -1;
+      }
+    }
+  }
+
+  return objects;
 }
 
 // ── Derived signals ───────────────────────────────────────────────────────────

@@ -82,6 +82,22 @@ export class ClickUpBoard implements TaskBoard {
     await this.post(`/task/${id}/comment`, { comment_text: text });
   }
 
+  async appendUpdate(id: string, title: string, text: string): Promise<void> {
+    const task = await this.fetchTask(id);
+    const existing = task?.description ?? '';
+    const updateBlock = [
+      existing,
+      '',
+      '---',
+      `## Update - ${title}`,
+      `_Appended: ${new Date().toISOString()}_`,
+      '',
+      text,
+    ].filter(Boolean).join('\n');
+
+    await this.put(`/task/${id}`, { description: updateBlock });
+  }
+
   async addTags(id: string, tags: string[]): Promise<void> {
     const task = await this.fetchTask(id);
     const existing = new Set((task?.tags ?? []).map((t) => t.toLowerCase()));
@@ -127,6 +143,7 @@ function normalise(raw: any): AidevTask {
     status:      normaliseStatus(raw?.status),
     url:         String(raw?.url ?? ''),
     tags,
+    milestoneId: undefined,
   };
 }
 

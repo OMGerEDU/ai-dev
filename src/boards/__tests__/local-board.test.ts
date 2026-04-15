@@ -128,6 +128,19 @@ describe('LocalBoard', () => {
     });
   });
 
+  describe('appendUpdate', () => {
+    it('appends a structured update block into the same task description', async () => {
+      const created = await board.createTask(makeSpec({ title: 'History task', description: 'Original body' }));
+      await board.appendUpdate(created.id, 'Fix: History task', 'New evidence and follow-up notes');
+
+      const fetched = await board.fetchTask(created.id);
+      expect(fetched).not.toBeNull();
+      expect(fetched!.description).toContain('Original body');
+      expect(fetched!.description).toContain('## Update - Fix: History task');
+      expect(fetched!.description).toContain('New evidence and follow-up notes');
+    });
+  });
+
   describe('round-trip', () => {
     it('create → fetch → updateStatus → fetch preserves identity', async () => {
       const created = await board.createTask(makeSpec({ title: 'Round trip' }));

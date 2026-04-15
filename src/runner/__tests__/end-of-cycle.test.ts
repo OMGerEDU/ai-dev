@@ -38,6 +38,7 @@ function makeMockBoard() {
     createTask:   () => Promise.resolve({ id: 't1', name: '', tags: [], status: 'open', description: '', url: '' }),
     updateStatus: () => Promise.resolve(),
     postComment,
+    appendUpdate: () => Promise.resolve(),
     addTags:      () => Promise.resolve(),
     markStart:    () => Promise.resolve(),
     name: 'MockBoard',

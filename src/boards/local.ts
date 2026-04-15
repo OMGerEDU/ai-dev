@@ -58,6 +58,7 @@ export class LocalBoard implements TaskBoard {
       status,
       url: join(dir, filename),
       tags: spec.tags,
+      milestoneId: spec.milestoneId,
     };
   }
 
@@ -80,6 +81,23 @@ export class LocalBoard implements TaskBoard {
     const existing = await readFile(task.url, 'utf8').catch(() => '');
     const comment = `\n\n<!-- comment: ${new Date().toISOString()} -->\n${text}`;
     await writeFile(task.url, existing + comment, 'utf8');
+  }
+
+  async appendUpdate(id: string, title: string, text: string): Promise<void> {
+    const tasks = await this.fetchTasks();
+    const task = tasks.find((t) => t.id === id);
+    if (!task?.url) return;
+
+    const existing = await readFile(task.url, 'utf8').catch(() => '');
+    const updateBlock = [
+      '',
+      '---',
+      `## Update - ${title}`,
+      `_Appended: ${new Date().toISOString()}_`,
+      '',
+      text,
+    ].join('\n');
+    await writeFile(task.url, existing + updateBlock, 'utf8');
   }
 
   async addTags(id: string, tags: string[]): Promise<void> {
@@ -107,10 +125,11 @@ export class LocalBoard implements TaskBoard {
       const id    = extractFrontmatter(text, 'id') ?? basename(filepath, '.md');
       const name  = extractFrontmatter(text, 'title') ?? id;
       const tagsRaw = extractFrontmatter(text, 'tags') ?? '';
+      const milestoneId = extractFrontmatter(text, 'milestone') ?? undefined;
       const tags  = tagsRaw.split(',').map((t) => t.trim()).filter(Boolean);
       const desc  = extractBody(text);
 
-      return { id, name, description: desc, status, url: filepath, tags };
+      return { id, name, description: desc, status, url: filepath, tags, milestoneId };
     } catch {
       return null;
     }
