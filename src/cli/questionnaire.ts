@@ -69,8 +69,10 @@ Current state: ${answers['current']}
 Version 1 goal: ${answers['done']}
 Constraints: ${answers['constraints']}
 
-Generate a .aidev/goal.md file that will guide an AI agent to build this project.
-Use this exact format — nothing else, no preamble:
+IMPORTANT: Output ONLY the raw file content as plain text. Do NOT use any tools.
+Do NOT write files. Do NOT call any functions. Just print the text directly.
+
+Use this exact format — nothing else, no preamble, no explanation:
 
 # <concise title>
 
@@ -92,7 +94,7 @@ Use this exact format — nothing else, no preamble:
 - <distribution, packaging, and accounts (unless stated)>
 `.trim();
 
-  const result = spawnSync(cli, ['-p'], {
+  const result = spawnSync(cli, ['-p', '--allowedTools', ''], {
     input: prompt,
     encoding: 'utf8',
     timeout: 60_000,
@@ -100,9 +102,13 @@ Use this exact format — nothing else, no preamble:
     stdio: ['pipe', 'pipe', 'pipe'],
   });
 
-  const text = (result.stdout ?? '').trim();
-  if (!text || result.status !== 0) return '';
-  return text;
+  const raw = ((result.stdout ?? '') + (result.stderr ?? '')).trim();
+  // Reject if Claude returned a tool-request or empty
+  if (!raw || result.status !== 0 || raw.startsWith('Please approve')) return '';
+  // Strip any leading prose before the first # heading
+  const headingStart = raw.indexOf('\n#');
+  const text = headingStart > 0 ? raw.slice(headingStart + 1) : raw;
+  return text.startsWith('#') ? text : '';
 }
 
 function synthesizeFallback(answers: Record<string, string>): string {
