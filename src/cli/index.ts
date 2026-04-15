@@ -3,17 +3,20 @@
  * aidev CLI
  *
  * Commands:
+ *   aidev init     Interactive setup wizard — board, goal questionnaire, skills
  *   aidev run      Run the autonomous goal loop (pick → build → verify → continue)
  *   aidev status   Print goal progress and milestone states
  *   aidev verify   Run verifyCmd for all unverified milestones
- *   aidev init     Scaffold .aidev/ in the current project
  *   aidev memory   Show what aidev has learned about this project
+ *   aidev skills   Manage skills (list | search | add | remove | installed)
  */
 
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { mkdir, copyFile, access } from 'node:fs/promises';
 import { readFileSync } from 'node:fs';
+import { runSetupWizard } from './setup-wizard.js';
+import { runSkillsCommand } from './skills-cmd.js';
 import type { HookContract } from '../hooks/contract.js';
 import {
   loadGoal,
@@ -138,21 +141,7 @@ async function cmdVerify(): Promise<void> {
 }
 
 async function cmdInit(): Promise<void> {
-  const aidevDir = join(CWD, '.aidev');
-  await mkdir(aidevDir, { recursive: true });
-
-  for (const file of ['goal.md', 'providers.json']) {
-    const dest = join(aidevDir, file);
-    try {
-      await access(dest);
-      console.log(`  exists  .aidev/${file}`);
-    } catch {
-      await copyFile(join(TEMPLATES_DIR, file), dest);
-      console.log(`  created .aidev/${file}`);
-    }
-  }
-
-  console.log('\nDone. Edit .aidev/goal.md then run `aidev run` or `aidev verify`.');
+  await runSetupWizard(CWD, TEMPLATES_DIR);
 }
 
 async function cmdMemory(): Promise<void> {
@@ -201,12 +190,28 @@ function parseEnvFile(path: string, into: Record<string, string | undefined>): v
 // ── Dispatch ──────────────────────────────────────────────────────────────────
 
 switch (command) {
-  case 'run':    await cmdRun();    break;
-  case 'status': await cmdStatus(); break;
-  case 'verify': await cmdVerify(); break;
-  case 'init':   await cmdInit();   break;
-  case 'memory': await cmdMemory(); break;
+  case 'init':
+    await cmdInit();
+    break;
+  case 'run':
+    await cmdRun();
+    break;
+  case 'status':
+    await cmdStatus();
+    break;
+  case 'verify':
+    await cmdVerify();
+    break;
+  case 'memory':
+    await cmdMemory();
+    break;
+  case 'skills':
+    await runSkillsCommand(args[1], args.slice(2), CWD);
+    break;
   default:
-    console.error(`Unknown command: ${command}\nUsage: aidev [run|status|verify|init|memory] [--dry-run] [--max-tasks=N]`);
+    console.error(
+      `Unknown command: ${command}\n` +
+      `Usage: aidev [init|run|status|verify|memory|skills] [--dry-run] [--max-tasks=N]`,
+    );
     process.exit(1);
 }

@@ -21,12 +21,12 @@ Each cycle is: **Pick → Build prompt → Call AI → Verify → Continue**
 
 ---
 
-## Deploy in 5 minutes
+## Deploy in 2 minutes
 
 ### Prerequisites
 
 - Node.js 18+
-- At least one AI agent CLI installed and on PATH:
+- At least one AI agent CLI on PATH:
   - [Claude Code](https://claude.ai/code) — `claude`
   - [OpenAI Codex CLI](https://github.com/openai/codex) — `codex`
   - [Antigravity](https://github.com/sickn33/antigravity) — `antigravity` *(optional)*
@@ -44,39 +44,80 @@ npm install && npm run build
 npm link        # makes `aidev` available globally
 ```
 
-### 2. Scaffold your project
+### 2. Run the setup wizard
 
 ```bash
 cd your-project
 aidev init
 ```
 
-This creates `.aidev/goal.md` and `.aidev/providers.json`.
+The wizard walks you through three steps:
 
-### 3. Configure your goal
+```
+══════════════════════════════════════════════════════════
+  aidev — autonomous AI delivery engine
+══════════════════════════════════════════════════════════
 
-Edit `.aidev/goal.md`:
+  ✓ Found AI CLI: claude, codex
 
-```markdown
-# My Goal
+Step 1 — Task Board
+  Where should aidev track tasks?
+  1. Local files  (no account needed)
+  2. Linear
+  3. ClickUp
+  Choice [1/2/3]: 1
 
-Build a REST API for user management with full test coverage.
+Step 2 — Project Goal
+  What are you building?
+  → A REST API for user management with JWT auth
 
-## Success criteria
+  What is the tech stack?
+  → Node.js, Express, TypeScript, PostgreSQL
 
-- All endpoints return correct status codes
-- `npm test` passes with no failures
-- TypeScript compiles: `npm run typecheck`
+  What already exists?
+  → Empty repo with package.json
 
-## Constraints
+  What does version 1 look like?
+  → CRUD endpoints for users, tests passing, deployed to staging
 
-- Do not modify the database schema without explicit review
-- Prefer functional patterns over class-based
+  Any hard constraints?
+  → Do not change the DB schema without review
 
-## Out of scope
+  Synthesizing goal.md with claude…
 
-- Frontend / UI work
-- Deployment / infrastructure
+  ══════════════════════════════════
+  Your goal.md
+  ══════════════════════════════════
+  # Build a user management REST API
+  ...
+  ══════════════════════════════════
+
+  Looks good? [y / edit / quit] → y
+
+Step 3 — Skills
+  memory
+   1) claude-mem          Persistent cross-session memory (Chroma + SQLite)
+  workflow
+   2) n8n-mcp             1,396+ n8n automation nodes
+  ...
+
+  Add skills (numbers or IDs): 1
+
+  ══════════════════════════════════
+  Done!
+  ══════════════════════════════════
+  ✓ .aidev/goal.md
+  ✓ .aidev/providers.json
+  ✓ .env.aidev
+  ✓ .aidev/skills.json (1 skill)
+
+  Next: aidev run
+```
+
+### 3. Run
+
+```bash
+aidev run
 ```
 
 ### 4. Configure providers
@@ -134,11 +175,12 @@ aidev status
 
 | Command | Description |
 |---------|-------------|
-| `aidev init` | Scaffold `.aidev/` in the current project |
+| `aidev init` | Interactive setup wizard — board, goal, skills |
 | `aidev run` | Run the autonomous goal loop |
 | `aidev status` | Print goal progress and milestone states |
 | `aidev verify` | Run verifyCmd for all unverified milestones |
 | `aidev memory` | Show what aidev has learned about this project |
+| `aidev skills` | Manage skills (see below) |
 
 Flags for `aidev run`:
 
@@ -146,6 +188,59 @@ Flags for `aidev run`:
 |------|---------|-------------|
 | `--dry-run` | off | Log prompts without calling AI |
 | `--max-tasks=N` | 20 | Safety cap on tasks per run |
+
+---
+
+---
+
+## Skills
+
+Skills are pre-built capabilities the AI agent can reference in every task prompt. They're stored in `.aidev/skills.json` and installed automatically at run time.
+
+### Built-in catalog (10 skills)
+
+| ID | Category | Description |
+|----|----------|-------------|
+| `claude-mem` | memory | Persistent cross-session memory — Chroma vector DB + SQLite FTS5 |
+| `lightrag` | knowledge | Knowledge graph RAG — entity/relationship retrieval, 50-85% better comprehension |
+| `n8n-mcp` | workflow | 1,396+ n8n automation nodes via MCP |
+| `voicemode` | voice | Hands-free voice interaction — local Whisper STT + Kokoro TTS |
+| `ui-ux-pro` | design | Design system generator — 67 styles, 161 industry palettes |
+| `superpowers` | patterns | Structured pipeline: brainstorm → plan → TDD → review |
+| `antigravity-skills` | patterns | 1,410+ installable skill patterns via npm |
+| `everything-claude` | agents | 48 specialized agents + 183 skills framework |
+| `claude-blueprints` | agents | 75+ domain workspaces + 350 slash commands |
+| `composio-plugins` | workflow | 500+ service integrations — git, DevOps, code quality |
+
+### Skill commands
+
+```bash
+aidev skills list                 # show full catalog
+aidev skills search memory        # filter by keyword
+aidev skills add claude-mem       # add to .aidev/skills.json
+aidev skills pull claude-mem      # alias for add
+aidev skills remove claude-mem    # remove
+aidev skills installed            # what's active in this project
+```
+
+### Manual entry
+
+Add any skill by editing `.aidev/skills.json` directly:
+
+```json
+{
+  "skills": [
+    {
+      "id": "my-skill",
+      "source": "npm",
+      "package": "my-skill-package",
+      "description": "What this skill does"
+    }
+  ]
+}
+```
+
+Supported sources: `npm`, `mcp`, `git`.
 
 ---
 
