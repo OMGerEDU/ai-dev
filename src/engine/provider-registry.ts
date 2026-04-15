@@ -36,6 +36,8 @@ export interface TaskLike {
   status: string;
 }
 
+export type ProviderEligibilityFn = (selection: ProviderSelection) => boolean;
+
 function hasTag(task: TaskLike, tag: string): boolean {
   return (task.tags ?? []).some((t) => t.toLowerCase() === tag.toLowerCase());
 }
@@ -119,6 +121,21 @@ export function rankProviders(
     score: candidate.score,
     reason: `score:${candidate.score} tier:${tier} tags:[${(task.tags ?? []).join(',')}]`,
   }));
+}
+
+export function rankEligibleProviders(
+  task: TaskLike,
+  registry: ProviderRegistry,
+  isEligible: ProviderEligibilityFn,
+): ProviderSelection[] {
+  const ranked = rankProviders(task, registry);
+  const eligible = ranked.filter((selection) => isEligible(selection));
+
+  if (!eligible.length) {
+    throw new Error('No eligible AI providers in registry');
+  }
+
+  return eligible;
 }
 
 let registryCache: ProviderRegistry | null = null;

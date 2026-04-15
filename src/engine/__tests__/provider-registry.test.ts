@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from '@jest/globals';
 import {
   selectProvider,
+  rankEligibleProviders,
   resetRegistryCache,
 } from '../provider-registry.js';
 import type { ProviderRegistry, TaskLike } from '../provider-registry.js';
@@ -89,5 +90,28 @@ describe('selectProvider', () => {
     const sel = selectProvider(task, REGISTRY);
     // codex is unavailable, falls back to claude
     expect(sel.provider).toBe('claude');
+  });
+});
+
+describe('rankEligibleProviders', () => {
+  it('filters out cooled-down provider+model selections before ranking', () => {
+    const task: TaskLike = { name: 'test', tags: ['refactor'], status: 'Open' };
+    const eligible = rankEligibleProviders(task, {
+      ...REGISTRY,
+      providers: {
+        ...REGISTRY.providers,
+        codex: { ...REGISTRY.providers.codex, available: true },
+      },
+    }, (selection) => selection.provider !== 'claude');
+
+    expect(eligible).toHaveLength(1);
+    expect(eligible[0]?.provider).toBe('codex');
+  });
+
+  it('throws when all available selections are excluded by eligibility rules', () => {
+    const task: TaskLike = { name: 'test', tags: ['refactor'], status: 'Open' };
+    expect(() => rankEligibleProviders(task, REGISTRY, () => false)).toThrow(
+      'No eligible AI providers in registry',
+    );
   });
 });
