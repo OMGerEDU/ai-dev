@@ -21,6 +21,7 @@ import type { AidevTask, ContinuationSpec, Milestone } from '../engine/types.js'
 import { loadGoal, loadMilestones, saveMilestones, deriveMilestonesFromGoal, measureProgress, getActiveMilestone } from '../engine/goal-engine.js';
 import { advanceMilestone, buildGapContinuations, persistMilestoneUpdate } from '../engine/milestone-engine.js';
 import { loadProviderRegistry, selectProvider } from '../engine/provider-registry.js';
+import type { ProviderRegistry, ProviderSelection } from '../engine/provider-registry.js';
 import { extractJsonFromAgentText, validateTaskOutput, isGenuinelyDone, summariseOutput } from '../output/task-output.js';
 import { LocalMemory as ProjectMemory } from '../memory/memory.js';
 import { loadSkills, buildSkillsSection, ensureSkillsInstalled } from '../skills/index.js';
@@ -127,7 +128,8 @@ export class Runner {
       lastTaskId = task.id;
       await this.board.updateStatus(task.id, STATUS.IN_PROGRESS);
 
-      const selection = selectProvider(task, registry);
+      let selection = selectProvider(task, registry);
+      const providerChain = buildProviderChain(selection, registry);
 
       const projectCtx = await this.hooks.buildProjectContext(runCtx);
       const taskGuidance = await this.hooks.buildTaskGuidance(task, selection);
@@ -155,7 +157,9 @@ export class Runner {
         rawOutput = JSON.stringify({ milestoneAdvanced: true, testsResult: 'not-run', confidence: 'medium', blockers: [] });
         success = true;
       } else {
-        const result = callAI(selection.cli, taskCtx.prompt);
+        const result = callAI(providerChain, taskCtx.prompt, log);
+        selection = result.selection;
+        taskCtx = { ...taskCtx, providerSelection: selection };
         rawOutput = result.output;
         success   = result.exitCode === 0;
       }
@@ -340,16 +344,50 @@ function buildPrompt(task: AidevTask, projectCtx: string, taskGuidance: string, 
   return parts.join('\n');
 }
 
-function callAI(cli: string, prompt: string): { exitCode: number; output: string } {
+function callAI(
+  chain: ProviderSelection[],
+  prompt: string,
+  logger: (...args: unknown[]) => void,
+): { exitCode: number; output: string; selection: ProviderSelection } {
+  let lastResult: { exitCode: number; output: string; selection: ProviderSelection } | null = null;
+
+  for (let i = 0; i < chain.length; i++) {
+    const selection = chain[i];
+    const result = callSingleProvider(selection, prompt);
+    lastResult = { ...result, selection };
+
+    if (result.exitCode === 0 && !looksLikeRetryableProviderFailure(result.output)) {
+      return lastResult;
+    }
+
+    if (i < chain.length - 1 && shouldTryNextProvider(result.exitCode, result.output)) {
+      logger(
+        `Provider ${selection.provider} failed; retrying with ${chain[i + 1].provider}.`,
+      );
+      continue;
+    }
+
+    return lastResult;
+  }
+
+  return lastResult ?? {
+    exitCode: 1,
+    output: 'No provider candidates available',
+    selection: chain[0]!,
+  };
+}
+
+function callSingleProvider(
+  selection: ProviderSelection,
+  prompt: string,
+): { exitCode: number; output: string } {
   try {
-    // Pass prompt via stdin to avoid Windows CLI arg length limits (32 767 chars).
-    // claude uses `-p` (--print) flag for non-interactive mode; prompt on stdin.
-    const result = spawnSync(cli, ['-p', '--allowedTools', 'Bash,Edit,Write,Read,Glob,Grep'], {
+    const result = spawnSync(selection.cli, buildProviderArgs(selection), {
       input:    prompt,
       encoding: 'utf8',
-      timeout:  300_000,   // 5 min max per task
+      timeout:  300_000,
       stdio:    ['pipe', 'pipe', 'pipe'],
-      shell:    true,       // required on Windows to resolve CLI from PATH
+      shell:    true,
     });
     return {
       exitCode: result.status ?? 1,
@@ -358,6 +396,48 @@ function callAI(cli: string, prompt: string): { exitCode: number; output: string
   } catch (err: any) {
     return { exitCode: 1, output: err.message ?? 'spawn failed' };
   }
+}
+
+function buildProviderArgs(selection: ProviderSelection): string[] {
+  const key = selection.provider.toLowerCase();
+
+  if (key === 'codex') {
+    return ['exec', '--model', selection.model, '-'];
+  }
+
+  if (key === 'claude') {
+    return ['-p', '--model', selection.model, '--allowedTools', 'Bash,Edit,Write,Read,Glob,Grep'];
+  }
+
+  return ['-p', '--model', selection.model];
+}
+
+function shouldTryNextProvider(exitCode: number, output: string): boolean {
+  return exitCode !== 0 || looksLikeRetryableProviderFailure(output);
+}
+
+function looksLikeRetryableProviderFailure(output: string): boolean {
+  return /429|rate limit|quota|too many requests|try again later|overloaded/i.test(output);
+}
+
+function buildProviderChain(
+  primary: ProviderSelection,
+  registry: ProviderRegistry,
+): ProviderSelection[] {
+  const fallbackSelections = (
+    Object.entries(registry.providers) as Array<[string, ProviderRegistry['providers'][string]]>
+  )
+    .filter(([name, provider]) => provider.available && name !== primary.provider)
+    .map(([name, provider]) => ({
+      provider: name,
+      cli: provider.cli,
+      model: provider.models[primary.tier] ?? provider.models.medium,
+      tier: primary.tier,
+      score: -1,
+      reason: `fallback-after:${primary.provider}`,
+    }));
+
+  return [primary, ...fallbackSelections];
 }
 
 function currentBranch(root: string): string {

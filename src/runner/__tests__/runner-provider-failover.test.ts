@@ -1,0 +1,208 @@
+import { jest, describe, it, expect, beforeEach, afterEach } from '@jest/globals';
+import { mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import type { TaskBoard } from '../../boards/board.js';
+import type { AidevTask, ContinuationSpec } from '../../engine/types.js';
+
+const spawnSyncMock = jest.fn();
+const execSyncMock = jest.fn(() => 'main\n');
+const postEndOfCycleReportMock = jest.fn(async () => undefined);
+
+jest.unstable_mockModule('node:child_process', () => ({
+  execSync: execSyncMock,
+  spawnSync: spawnSyncMock,
+}));
+
+jest.unstable_mockModule('../end-of-cycle.js', () => ({
+  postEndOfCycleReport: postEndOfCycleReportMock,
+}));
+
+const { Runner } = await import('../runner.js');
+
+class MemoryBoard implements TaskBoard {
+  readonly name = 'memory-board';
+
+  constructor(private readonly tasks: AidevTask[]) {}
+
+  async fetchTasks(): Promise<AidevTask[]> {
+    return this.tasks;
+  }
+
+  async fetchTask(id: string): Promise<AidevTask | null> {
+    return this.tasks.find((task) => task.id === id) ?? null;
+  }
+
+  async createTask(spec: ContinuationSpec): Promise<AidevTask> {
+    const created: AidevTask = {
+      id: `task-${this.tasks.length + 1}`,
+      name: spec.title,
+      description: spec.description,
+      status: spec.status.toLowerCase(),
+      url: '',
+      tags: spec.tags,
+    };
+    this.tasks.push(created);
+    return created;
+  }
+
+  async updateStatus(id: string, status: string): Promise<void> {
+    const task = this.tasks.find((item) => item.id === id);
+    if (task) task.status = status;
+  }
+
+  async postComment(): Promise<void> {}
+
+  async addTags(id: string, tags: string[]): Promise<void> {
+    const task = this.tasks.find((item) => item.id === id);
+    if (!task) return;
+    for (const tag of tags) {
+      if (!task.tags.includes(tag)) task.tags.push(tag);
+    }
+  }
+
+  async markStart(id: string): Promise<void> {
+    await this.addTags(id, ['start']);
+    await this.updateStatus(id, 'open');
+  }
+}
+
+describe('Runner provider failover', () => {
+  let projectRoot: string;
+
+  beforeEach(async () => {
+    projectRoot = await mkdtemp(join(tmpdir(), 'aidev-runner-failover-'));
+    await mkdir(join(projectRoot, '.aidev'), { recursive: true });
+
+    await writeFile(join(projectRoot, '.aidev', 'goal.md'), [
+      '# Failover Goal',
+      '',
+      'Verify runtime provider fallback.',
+      '',
+      '## Success criteria',
+      '',
+      '- Planning task succeeds after provider failover',
+      '',
+      '## Constraints',
+      '',
+      '- Keep behavior deterministic',
+      '',
+      '## Out of scope',
+      '',
+      '- Anything unrelated',
+    ].join('\n'), 'utf8');
+
+    await writeFile(join(projectRoot, '.aidev', 'milestones.json'), JSON.stringify([
+      {
+        id: 'm1',
+        title: 'Planning task succeeds after provider failover',
+        acceptanceCriteria: ['Planning task succeeds after provider failover'],
+        status: 'pending',
+        lane: 'planning',
+        dependsOn: [],
+        failureCount: 0,
+      },
+    ], null, 2), 'utf8');
+
+    await writeFile(join(projectRoot, '.aidev', 'providers.json'), JSON.stringify({
+      providers: {
+        claude: {
+          cli: 'claude',
+          available: true,
+          models: { high: 'claude-opus', medium: 'claude-sonnet', low: 'claude-haiku' },
+          strengths: ['planning', 'reasoning'],
+          weaknesses: [],
+          costTier: 'high',
+          contextWindow: 200000,
+        },
+        codex: {
+          cli: 'codex',
+          available: true,
+          models: { high: 'o3', medium: 'o4-mini', low: 'gpt-4o-mini' },
+          strengths: ['implementation'],
+          weaknesses: [],
+          costTier: 'medium',
+          contextWindow: 128000,
+        },
+      },
+      taskStrengthMap: {
+        planning: ['planning'],
+      },
+      readOnlyTasks: [],
+      tierForTask: {
+        planning: 'medium',
+      },
+    }, null, 2), 'utf8');
+
+    spawnSyncMock.mockReset();
+    execSyncMock.mockClear();
+    postEndOfCycleReportMock.mockClear();
+  });
+
+  afterEach(async () => {
+    await rm(projectRoot, { recursive: true, force: true });
+  });
+
+  it('retries the task with codex when claude exits with a rate-limit failure', async () => {
+    spawnSyncMock.mockImplementation((cli: unknown) => {
+      const command = String(cli);
+      if (command === 'claude') {
+        return {
+          status: 1,
+          stdout: '',
+          stderr: '429 rate limit exceeded for claude',
+        };
+      }
+
+      if (command === 'codex') {
+        return {
+          status: 0,
+          stdout: [
+            '```json',
+            '{"milestoneAdvanced":true,"testsResult":"pass","confidence":"high","blockers":[],"notes":"used codex fallback"}',
+            '```',
+          ].join('\n'),
+          stderr: '',
+        };
+      }
+
+      throw new Error(`Unexpected CLI: ${command}`);
+    });
+
+    const board = new MemoryBoard([
+      {
+        id: 'task-1',
+        name: 'Plan the failover fix',
+        description: 'Retry with codex when claude is unavailable.',
+        status: 'open',
+        url: '',
+        tags: ['start', 'planning'],
+      },
+    ]);
+
+    const runner = new Runner({
+      projectRoot,
+      config: { AGENTS: 'claude,codex' },
+      hooks: {
+        createBoard: () => board,
+        buildProjectContext: () => '',
+        buildTaskGuidance: () => '',
+      },
+      maxTasks: 1,
+    });
+
+    await runner.run();
+
+    expect(spawnSyncMock).toHaveBeenCalledTimes(2);
+    expect(spawnSyncMock.mock.calls[0]?.[0]).toBe('claude');
+    expect(spawnSyncMock.mock.calls[1]?.[0]).toBe('codex');
+    expect(spawnSyncMock.mock.calls[0]?.[1]).toEqual(expect.arrayContaining(['-p', '--model', 'claude-sonnet']));
+    expect(spawnSyncMock.mock.calls[1]?.[1]).toEqual(expect.arrayContaining(['exec', '--model', 'o4-mini', '-']));
+
+    const milestones = JSON.parse(await readFile(join(projectRoot, '.aidev', 'milestones.json'), 'utf8')) as Array<{ status: string }>;
+    expect(milestones[0]?.status).toBe('done');
+
+    const task = await board.fetchTask('task-1');
+    expect(task?.status).toBe('done');
+  });
+});
