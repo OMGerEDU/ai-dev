@@ -469,6 +469,7 @@ describe('Runner provider failover', () => {
       {
         path: cooldownPath,
         now: new Date('2026-04-16T00:40:00.000Z'),
+        durationMs: 24 * 60 * 60 * 1000,
       },
     );
     await recordCooldown(
@@ -477,6 +478,7 @@ describe('Runner provider failover', () => {
       {
         path: cooldownPath,
         now: new Date('2026-04-16T00:40:00.000Z'),
+        durationMs: 24 * 60 * 60 * 1000,
       },
     );
 

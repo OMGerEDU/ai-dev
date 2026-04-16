@@ -57,9 +57,10 @@ describe('model-cooldowns', () => {
       { path, now: new Date('2026-04-16T01:00:00.000Z') },
     );
 
-    const registry = await loadCooldownRegistry(path, new Date('2026-04-16T01:30:00.000Z'));
-    expect(isSelectionCooledDown({ provider: 'codex', model: 'o4-mini' }, registry)).not.toBeNull();
-    expect(isSelectionCooledDown({ provider: 'claude', model: 'claude-sonnet-4-6' }, registry)).toBeNull();
+    const now = new Date('2026-04-16T01:30:00.000Z');
+    const registry = await loadCooldownRegistry(path, now);
+    expect(isSelectionCooledDown({ provider: 'codex', model: 'o4-mini' }, registry, now)).not.toBeNull();
+    expect(isSelectionCooledDown({ provider: 'claude', model: 'claude-sonnet-4-6' }, registry, now)).toBeNull();
   });
 
   it('prunes expired entries from a raw list', () => {

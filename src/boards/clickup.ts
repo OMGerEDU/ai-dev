@@ -21,8 +21,15 @@ export interface ClickUpConfig {
   startTag?: string;
 }
 
+interface ClickUpStatusDef {
+  status: string;
+  type?: string;
+  orderindex?: number;
+}
+
 export class ClickUpBoard implements TaskBoard {
   readonly name = 'clickup';
+  private statusesPromise: Promise<ClickUpStatusDef[]> | null = null;
 
   constructor(private readonly cfg: ClickUpConfig) {}
 
@@ -52,9 +59,11 @@ export class ClickUpBoard implements TaskBoard {
   }
 
   async createTask(spec: ContinuationSpec): Promise<AidevTask> {
-    const status = spec.status.toLowerCase() === 'open'
-      ? (this.cfg.openStatus ?? 'open')
-      : (this.cfg.pendingStatus ?? 'pending');
+    const status = await this.resolveStatusName(
+      spec.status.toLowerCase() === 'open'
+        ? (this.cfg.openStatus ?? 'open')
+        : (this.cfg.pendingStatus ?? 'pending'),
+    );
 
     const res = await this.post(`/list/${this.cfg.listId}/task`, {
       name: spec.title,
@@ -75,7 +84,8 @@ export class ClickUpBoard implements TaskBoard {
   }
 
   async updateStatus(id: string, status: string): Promise<void> {
-    await this.put(`/task/${id}`, { status });
+    const resolved = await this.resolveStatusName(status);
+    await this.put(`/task/${id}`, { status: resolved });
   }
 
   async postComment(id: string, text: string): Promise<void> {
@@ -128,6 +138,38 @@ export class ClickUpBoard implements TaskBoard {
   private put(path: string, body: unknown) {
     return fetch(`${API}${path}`, { method: 'PUT', headers: this.headers(), body: JSON.stringify(body) });
   }
+
+  private async listStatuses(): Promise<ClickUpStatusDef[]> {
+    if (!this.statusesPromise) {
+      this.statusesPromise = (async () => {
+        const res = await this.get(`/list/${this.cfg.listId}`);
+        if (!res.ok) return [];
+        const payload = await res.json() as { statuses?: unknown[] };
+        return Array.isArray(payload.statuses)
+          ? payload.statuses.filter(isClickUpStatusDef)
+          : [];
+      })();
+    }
+
+    try {
+      return await this.statusesPromise;
+    } catch {
+      this.statusesPromise = null;
+      return [];
+    }
+  }
+
+  private async resolveStatusName(requested: string): Promise<string> {
+    const statuses = await this.listStatuses();
+    if (!statuses.length) return requested;
+
+    const exact = findStatusByLabel(statuses, requested);
+    if (exact) return exact.status;
+
+    const internal = normaliseInternalStatusName(requested);
+    const mapped = pickStatusForInternalName(statuses, internal, this.cfg);
+    return mapped?.status ?? requested;
+  }
 }
 
 // ── Normalisation ─────────────────────────────────────────────────────────────
@@ -166,4 +208,81 @@ function normaliseStatus(s: any): string {
   if (label === 'in progress' || label === 'in_progress')           return 'in_progress';
   if (label === 'done' || label === 'complete' || label === 'closed') return 'done';
   return 'pending';
+}
+
+function isClickUpStatusDef(value: unknown): value is ClickUpStatusDef {
+  return typeof (value as ClickUpStatusDef | undefined)?.status === 'string';
+}
+
+function normaliseStatusLabel(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+function findStatusByLabel(statuses: ClickUpStatusDef[], requested: string): ClickUpStatusDef | undefined {
+  const wanted = normaliseStatusLabel(requested);
+  return statuses.find((status) => normaliseStatusLabel(status.status) === wanted);
+}
+
+function normaliseInternalStatusName(requested: string): 'open' | 'pending' | 'in_progress' | 'review' | 'done' {
+  const value = normaliseStatusLabel(requested).replace(/-/g, ' ');
+  if (value === 'open') return 'open';
+  if (value === 'pending') return 'pending';
+  if (value === 'review' || value === 'in review') return 'review';
+  if (value === 'in progress' || value === 'in_progress') return 'in_progress';
+  if (value === 'done' || value === 'closed' || value === 'complete') return 'done';
+  return 'pending';
+}
+
+function pickStatusForInternalName(
+  statuses: ClickUpStatusDef[],
+  internal: 'open' | 'pending' | 'in_progress' | 'review' | 'done',
+  cfg: ClickUpConfig,
+): ClickUpStatusDef | undefined {
+  switch (internal) {
+    case 'open':
+      return findStatusByLabel(statuses, cfg.openStatus ?? 'open')
+        ?? findFirstByType(statuses, 'open');
+    case 'pending':
+      return findStatusByLabel(statuses, cfg.pendingStatus ?? 'pending')
+        ?? findByKeywords(statuses, ['pending', 'backlog', 'to do', 'todo'], 'open')
+        ?? findFirstByType(statuses, 'open');
+    case 'review':
+      return findByKeywords(statuses, ['review', 'in review', 'qa'], 'in_progress')
+        ?? findFirstByType(statuses, 'in_progress');
+    case 'in_progress':
+      return findByKeywords(statuses, ['in progress', 'working', 'active', 'doing'], 'in_progress')
+        ?? findFirstByType(statuses, 'in_progress');
+    case 'done':
+      return findByKeywords(statuses, ['done', 'complete', 'completed', 'closed'], 'done')
+        ?? findFirstByTypes(statuses, ['done', 'closed']);
+  }
+}
+
+function findFirstByType(statuses: ClickUpStatusDef[], type: string): ClickUpStatusDef | undefined {
+  return statuses.find((status) => normaliseStatusLabel(status.type ?? '') === type);
+}
+
+function findFirstByTypes(statuses: ClickUpStatusDef[], types: string[]): ClickUpStatusDef | undefined {
+  const wanted = new Set(types.map((type) => normaliseStatusLabel(type)));
+  return statuses.find((status) => wanted.has(normaliseStatusLabel(status.type ?? '')));
+}
+
+function findByKeywords(
+  statuses: ClickUpStatusDef[],
+  keywords: string[],
+  preferredType?: string,
+): ClickUpStatusDef | undefined {
+  const loweredKeywords = keywords.map((keyword) => normaliseStatusLabel(keyword));
+  const typedStatuses = preferredType
+    ? statuses.filter((status) => normaliseStatusLabel(status.type ?? '') === preferredType)
+    : statuses;
+
+  for (const status of typedStatuses) {
+    const label = normaliseStatusLabel(status.status);
+    if (loweredKeywords.some((keyword) => label.includes(keyword))) {
+      return status;
+    }
+  }
+
+  return undefined;
 }
